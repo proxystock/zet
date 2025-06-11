@@ -1,4 +1,5 @@
 # List Kubernetes nodes by taint
+> #k8s #kubernetes #kubectl #taint #label
 
 The taints and labels added to nodes entirely depends on the environment, administration team, and applications/workloads that are hosted. Therefore, the examples below are simply just generic for reference.
 

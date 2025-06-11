@@ -1,4 +1,5 @@
 # Manually label and taint nodes in Kubernetes
+> #k8s #kubernetes #kubectl #taint #label #node
 
 In this example, we are labeling H100 GPU nodes in a production cluster. The taints and labels referenced **are not** universal to all K8s clusters, and are only being used as reference info for a generalized Kubernetes knowledge base.
 
