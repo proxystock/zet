@@ -1,12 +1,16 @@
 # Using a variable in awk search
 
+> #awk #search #variable #bash #shell
+
 Use double quotes and escape awks positional parameter:
 
 ```console
-$ fqmgr -S hpcq2adas -a all | awk "/$pattern/ {print \$1}"
-pattern1
-pattern2
-pattern3
-pattern4
-pattern5
+$ pattern='abc'
+
+$ awk "/$pattern/ {print \$1}"
+abc1
+abc2
+abc3
+abc4
+abc5
 ```

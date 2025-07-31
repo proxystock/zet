@@ -1,5 +1,5 @@
 # Regex capture group example
-> #regex
+> #regex #bash #shell
 
 I just thought [this](https://grafana.com/docs/grafana/latest/dashboards/variables/add-template-variables/#filter-and-modify-using-named-text-and-value-capture-groups) example was really cool, and should be explored a bit for PD. 
 

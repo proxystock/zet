@@ -1,5 +1,7 @@
 # Math in AWK 
 
+> #awk #math #bash #shell
+
 Just a quick example of implementing math in an `awk` statement.
 
 ```bash
