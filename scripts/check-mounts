@@ -1,0 +1,120 @@
+#!/bin/bash
+# Check mounts (easy)
+# jkoss - 20240126
+
+# Configuration
+critical=2
+warning=1
+ok=0
+unknown=3
+threshold_crit=1
+TARGET_FILE="/proc/mounts"
+system_scan=false
+
+function USAGE()
+{
+	cat <<-END
+
+	Usage
+	  -f target             Specify target file to scan; Defaults to /proc/mounts
+	  -d device ...         Scan for a device name(s). Accepts multiple arguments.
+	  --scan                Scan and report any mounts missing from /etc/fstab.
+
+	  -h                    Display script usage
+
+	END
+}
+
+
+if [[ "$#" -eq 0 ]]; then
+	USAGE
+	exit
+fi
+
+# Not using getopts to allow multiple args
+while [[ "$#" -gt 0 ]]; do
+	key="$1"
+
+	case "$key" in
+
+		"-f")
+			TARGET_FILE="$2"
+			shift;
+		;;
+
+		"-d")
+			for X in "$*"; do
+				until [[ "$2" =~ ^"-" ]] || [[ "$2" = "" ]]; do
+					MOUNTED_DEVICE="$2"
+					DEVICES=("${DEVICES[@]}" "$MOUNTED_DEVICE")
+					shift;
+				done
+			done
+		;;
+
+		"--scan")
+			system_scan="true"
+		;;
+
+		"-h" | *)
+			USAGE;
+			exit "$ok"
+		;;
+
+	esac
+	shift;          #Remove lingering argument value
+done
+
+if [[ "$system_scan" = "true" ]]; then
+	# at some point figure out the syntax to avoid piping grep
+	#fstab_mounts=$(awk '/\// {print $2}' /etc/fstab)
+	fstab_mounts=$(awk '{print $2}' /etc/fstab | grep '/')
+	proc_mounts=$(awk '{print $2}' /proc/mounts)
+
+	# Clean up a few mounts. Should convert this to an array
+	fstab_mounts=$(grep -v -E -w "/|/boot|/tmp|/etc/fstab|/var" <<<"${fstab_mounts}")
+	
+	for X in $(echo "$fstab_mounts"); do 
+		#echo "${proc_mounts}" | grep -w -E "^${X}$" > /dev/null
+		#if [[ "$?" -eq 1 ]]; then
+		if ! grep -w -E "^${X}$" <<<"${proc_mounts}"
+			string="[CRITICAL] $X is not found in ${TARGET_FILE}\n"
+			raw_output=("${raw_output[@]}" "$string")
+		else
+			string="[OK] $X is mounted\n"
+			raw_output=("${raw_output[@]}" "$string")
+		fi
+
+	done
+else
+
+	for X in "${DEVICES[@]}"; do 
+		grep -w "$X" "$TARGET_FILE" > /dev/null
+		#if [[ $? -gt 0 ]]; then
+		if ! grep -w "${X}" "${TARGET_FILE}"
+			string="[CRITICAL] $X is not found in ${TARGET_FILE}\n"
+			raw_output=("${raw_output[@]}" "$string")
+		else
+			string="[OK] $X is mounted\n"
+			raw_output=("${raw_output[@]}" "$string")
+		fi
+	done
+fi
+
+
+critical_count=$(grep -c 'CRITICAL' <<<"${raw_output[*]}")
+ok_count=$(grep -c 'OK' <<<"${raw_outpu[*]}")
+
+
+if [[ "$critical_count" -ge "$threshold_crit" ]]; then
+	echo "One or more devices are not mounted:"
+	echo
+	echo -ne "${raw_output[@]}" |sort | sed 's/^ //g'
+	exit "$critical"
+else
+	echo "All devices mounted:"
+	echo
+	echo -ne "${raw_output[@]}" |sort | sed 's/^ //g'
+	exit "$ok"
+fi
+
