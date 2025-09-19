@@ -1,0 +1,149 @@
+#!/bin/bash
+
+# This script demonstrates usage of envsubst
+# Author: jkoss
+# ----------------------------------------------------
+
+# Prerequisites:
+# 1. ANY file in $basedir/inputs.d/ WILL BE INSTALLED AS INTEGRATION. Make sure this is empty before the looping.
+# 2. Run this script as root (elastic-agent install requirement)
+
+
+usage() {
+	cat <<-EOF
+
+		Wrapper script to help install elastic-agent with custom fields and install common integrations based on provided criteria.
+
+		Dry run:
+		$0 -b /path/to/elastic-agent -c <cluster> -r <pbs|k8s> -e <role_env> -v <pbs_version>  
+
+		Install: 
+		$0 -b /path/to/elastic-agent -c <cluster> -r pbs -e <role_env> -v <pbs_version> -x 
+
+		Usage: 
+		  -c    Cluster. Using "auto" will use the first 6 characters of hostname.
+		  -e    Environment (dependent on provided role).
+		  -b    Base [elastic-agent] directory where staging/templates and install script are located. 
+		            Example: /s/jkoss11/elastic-agent
+		  -r    Role (pbs, k8s).
+		  -v    Role version. For example, a pbs role would use '19' or '25' and a k8s role would reflect the Kubernetes major.minor version.
+		  -x    Execute. Default state is to print install command to stdout.
+
+
+	EOF
+}
+
+k8s_env=("prod" "inf" "sandbox")	# array of strings, used to control user input
+pbs_env=("prod" "ua" "adas")		# array of strings, used to control user input
+target=$(hostname)
+ES_DRYRUN="true"
+CLUSTER="auto"
+
+while getopts "hb:c:e:r:v:x" opt; do
+	case $opt in
+	h)
+		usage
+		exit
+		;;
+	c) export CLUSTER="${OPTARG}" ;;
+	e) export ROLE_ENV="${OPTARG}" ;;
+	b) basedir="${OPTARG}" ;;
+	r) export ROLE="${OPTARG}" ;;
+	v) export ROLE_VERSION="${OPTARG}" ;;
+	x) export ES_DRYRUN="false" ;;
+	*) echo "Invalid parameter: ${OPT}" ;;
+	esac
+
+done
+
+# Required parameters
+for X in CLUSTER ROLE ROLE_ENV ROLE_VERSION basedir; do
+	if [[ -z "$X" ]]; then
+		echo "Missing parameter: $X"
+	fi
+done
+
+if [[ "$CLUSTER" = "auto" ]]; then
+	CLUSTER="${target:0:6}"
+fi
+
+# Require staging/templates and inputs.d/ to exist for envsubst to do its thing
+for dir in "${basedir}/inputs.d" "${basedir}/staging/templates"; do
+	if [[ ! -d "${basedir}/inputs.d" ]]; then
+		echo "Error - $dir directory does not exist."
+	fi
+done
+
+# Check for install script
+if [[ ! -x "${basedir}/elastic-agent" ]]; then
+	echo "Error - $basedir/elastic-agent should exist and be executable (or exist as a symlink to the install script)."
+	exit 1
+fi
+
+# Required values for ROLE
+case "$ROLE" in
+pbs)
+	if ! grep -Fw "$ROLE_ENV" <<<"${pbs_env[*]}" >/dev/null; then		# If ROLE is pbs, make sure the ENV_ROLE matches one of the control array values set above
+		echo "Acceptable environments for the pbs role are: ${pbs_env[*]}"
+		exit 1
+	fi
+	for x in "$basedir"/staging/templates/template.batch.*; do
+		template=$(basename "$x")
+		envsubst <"${x}" >"${basedir}/inputs.d/${template//template.batch./}" 		# Use envsubst on matching files, remove "template.batch" in destination filename
+	done
+	;;
+
+k8s)
+	if ! grep -Fw "$ROLE_ENV" <<<"${k8s_env[*]}" >/dev/null; then
+		echo "Acceptable environments for the k8s role are: ${k8s_env[*]}"
+		exit 1
+	fi
+	# k8s integrations already run as k8sapp
+	if ls inputs.d/*.yml; then
+		rm -f inputs.d/*.yml
+	fi
+	# Currently there are no k8s integrations.
+	for x in "$basedir"/staging/templates/template.k8s.*; do
+		template=$(basename "$x")
+		envsubst <"${x}" >"${basedir}/inputs.d/${template//template.k8s./}" 		# Use envsubst on matching files, remove "template.k8s" in destination filename
+	done
+	;;
+
+*)
+	echo "Error - Role must be 'pbs' or 'k8s'."
+	exit 1
+	;;
+
+esac
+
+# sub placeholders
+envsubst <"${basedir}/staging/templates/template.elastic-agent.yml" >"${basedir}/elastic-agent.yml" 		# Use envsubst on base yaml
+
+# Install elastic-agent
+if [[ "$EUID" != 0 ]]; then
+	echo "Error - While elastic-agent does not run as root, it must be installed as root."
+	exit 1
+fi
+
+# Lets install
+if [[ "$ES_DRYRUN" = "true" ]]; then
+	echo "Running in dry-run mode on ${target}"
+	echo "Cluster: $CLUSTER"
+	echo "Role: $ROLE"
+	echo "Environment: $ROLE_ENV"
+	[[ -n "$ROLE_VERSION" ]] && echo "Role Version: $ROLE_VERSION"
+	echo
+	echo "Install command:"
+	echo "\"${basedir}/elastic-agent\" install -n -c \"${basedir}/inputs.d/\""
+	echo
+	exit
+fi
+
+if ! "${basedir}/elastic-agent" install -n -c "${basedir}/inputs.d/" 2>/dev/null; then
+	echo "Elastic Agent already installed, copying new configs and restarting daemon."
+	echo "You can find a copy of the existing configs in /opt/Elastic/Agent/ with '.old' suffixes."
+	rsync -r --backup --backup-dir="/opt/Elastic/Agent/" --suffix=".old" "${basedir}/inputs.d/" /opt/Elastic/Agent/inputs.d/
+	rsync --backup --backup-dir="/opt/Elastic/Agent/" --suffix=".old" "${basedir}/elastic-agent.yml" /opt/Elastic/Agent/
+	#rsync -r --delete --ignore-existing "${basedir}/elastic-agent.yml" /opt/Elastic/Agent/
+	systemctl restart elastic-agent
+fi
